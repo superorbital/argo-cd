@@ -1840,7 +1840,10 @@ func runConfigManagementPlugin(appPath, repoRoot string, envVars *v1alpha1.Env, 
 		}
 	}
 
-	env, err := getPluginEnvs(envVars, q, creds, false)
+	env, closer, err := getPluginEnvs(envVars, q, creds, false)
+	if closer != nil {
+		defer func() { _ = closer.Close() }()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1858,7 +1861,7 @@ func runConfigManagementPlugin(appPath, repoRoot string, envVars *v1alpha1.Env, 
 	return kube.SplitYAML([]byte(out))
 }
 
-func getPluginEnvs(env *v1alpha1.Env, q *apiclient.ManifestRequest, creds git.Creds, remote bool) ([]string, error) {
+func getPluginEnvs(env *v1alpha1.Env, q *apiclient.ManifestRequest, creds git.Creds, remote bool) ([]string, io.Closer, error) {
 	envVars := env.Environ()
 	envVars = append(envVars, "KUBE_VERSION="+text.SemVer(q.KubeVersion))
 	envVars = append(envVars, "KUBE_API_VERSIONS="+strings.Join(q.ApiVersions, ","))
@@ -1867,7 +1870,8 @@ func getPluginEnvs(env *v1alpha1.Env, q *apiclient.ManifestRequest, creds git.Cr
 }
 
 // getPluginParamEnvs gets environment variables for plugin parameter announcement generation.
-func getPluginParamEnvs(envVars []string, plugin *v1alpha1.ApplicationSourcePlugin, creds git.Creds, remote bool) ([]string, error) {
+func getPluginParamEnvs(envVars []string, plugin *v1alpha1.ApplicationSourcePlugin, creds git.Creds, remote bool) ([]string, io.Closer, error) {
+	var credCloser io.Closer
 	env := envVars
 	// Local plugins need also to have access to the local environment variables.
 	// Remote sidecar plugins will use the environment in the sidecar
@@ -1878,9 +1882,9 @@ func getPluginParamEnvs(envVars []string, plugin *v1alpha1.ApplicationSourcePlug
 	if creds != nil {
 		closer, environ, err := creds.Environ()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		defer func() { _ = closer.Close() }()
+		credCloser = closer
 		env = append(env, environ...)
 	}
 
@@ -1888,7 +1892,7 @@ func getPluginParamEnvs(envVars []string, plugin *v1alpha1.ApplicationSourcePlug
 	for i, v := range env {
 		parsedVar, err := v1alpha1.NewEnvEntry(v)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse env vars")
+			return nil, credCloser, fmt.Errorf("failed to parse env vars")
 		}
 		parsedEnv[i] = parsedVar
 	}
@@ -1901,17 +1905,20 @@ func getPluginParamEnvs(envVars []string, plugin *v1alpha1.ApplicationSourcePlug
 		}
 		paramEnv, err := plugin.Parameters.Environ()
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate env vars from parameters: %w", err)
+			return nil, credCloser, fmt.Errorf("failed to generate env vars from parameters: %w", err)
 		}
 		env = append(env, paramEnv...)
 	}
 
-	return env, nil
+	return env, credCloser, nil
 }
 
 func runConfigManagementPluginSidecars(ctx context.Context, appPath, repoPath, pluginName string, envVars *v1alpha1.Env, q *apiclient.ManifestRequest, creds git.Creds, tarDoneCh chan<- bool, tarExcludedGlobs []string) ([]*unstructured.Unstructured, error) {
 	// compute variables.
-	env, err := getPluginEnvs(envVars, q, creds, true)
+	env, closer, err := getPluginEnvs(envVars, q, creds, true)
+	if closer != nil {
+		defer func() { _ = closer.Close() }()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -2158,7 +2165,10 @@ func populatePluginAppDetails(ctx context.Context, res *apiclient.RepoAppDetails
 		fmt.Sprintf("ARGOCD_APP_SOURCE_TARGET_REVISION=%s", q.Source.TargetRevision),
 	}
 
-	env, err := getPluginParamEnvs(envVars, q.Source.Plugin, creds, true)
+	env, closer, err := getPluginParamEnvs(envVars, q.Source.Plugin, creds, true)
+	if closer != nil {
+		defer func() { _ = closer.Close() }()
+	}
 	if err != nil {
 		return fmt.Errorf("failed to get env vars for plugin: %w", err)
 	}
