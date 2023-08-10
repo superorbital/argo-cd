@@ -385,9 +385,12 @@ func (g GitHubAppCreds) Environ() (io.Closer, []string, error) {
 		env = append(env, fmt.Sprintf("GIT_SSL_KEY=%s", keyFile.Name()))
 
 	}
+	log.Debugf("Adding app creds to the credentials store. Username: %s, Password: %s", githubAccessTokenUsername, token)
 	nonce := g.store.Add(githubAccessTokenUsername, token)
+	log.Debugf("Stored specified creds with nonce: %s", nonce)
 	env = append(env, getGitAskPassEnv(nonce)...)
 	return argoioutils.NewCloser(func() error {
+		log.Debugf("Removing specified creds with nonce: %s", nonce)
 		g.store.Remove(nonce)
 		return httpCloser.Close()
 	}), env, nil

@@ -11,6 +11,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	log "github.com/sirupsen/logrus"
+
 	"github.com/argoproj/argo-cd/v2/util/git"
 	"github.com/argoproj/argo-cd/v2/util/io"
 )
@@ -34,6 +36,7 @@ func NewServer() *server {
 }
 
 func (s *server) GetCredentials(_ context.Context, q *CredentialsRequest) (*CredentialsResponse, error) {
+	log.Infof("Received GetCredentials request with nonce: %s", q.Nonce)
 	if q.Nonce == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "missing nonce")
 	}
